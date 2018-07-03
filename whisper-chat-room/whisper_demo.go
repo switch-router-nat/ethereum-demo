@@ -15,7 +15,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/discover"
-	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/params"
 	whisper "github.com/ethereum/go-ethereum/whisper/whisperv5"
 )
@@ -102,11 +101,9 @@ func serverConfig() {
 			PrivateKey:     asymKey,
 			MaxPeers:       100,
 			Protocols:      w.Protocols(),
-			Name:           common.MakeName("p2p chat group", "5.0"),
 			StaticNodes:    peers,
 			BootstrapNodes: peers,
 			TrustedNodes:   peers,
-			NAT:            nat.Any(),
 		},
 	}
 }
@@ -135,15 +132,31 @@ func peerMonitor() {
 	}
 }
 
+func showInfo() {
+
+	fmt.Printf("whisper v5\n")
+	fmt.Printf("Topic: %s, PoW : %f\n", *argTopic, *argPoW)
+	fmt.Printf("Peers:\n")
+	peersInfo := srv.PeersInfo()
+	for _, peer := range peersInfo {
+		fmt.Printf(" ID %s\n", peer.ID)
+	}
+}
+
 func txLoop(quit chan struct{}) {
 	defer wg.Done()
 	for {
 		s := readInput()
-		if s == quitCommand {
-			fmt.Println("Quit")
+		if s == "quit()" || s == "exit()" {
+			fmt.Println("program terminated")
 			close(quit)
 			break
-		} else if len(s) == 0 {
+		} else if s == "info()" {
+			showInfo()
+			continue
+		}
+
+		if len(s) == 0 {
 			continue
 		}
 
@@ -217,8 +230,6 @@ func main() {
 
 }
 
-const quitCommand = "~Q"
-
 func msgSend(payload []byte) {
 
 	params := whisper.MessageParams{
@@ -263,7 +274,7 @@ func msgDisplay(msg *whisper.ReceivedMessage) {
 	}
 
 	if whisper.IsPubKeyEqual(msg.Src, &asymKey.PublicKey) {
-		fmt.Printf("\nI(%s PoW %f): %s\n", timestamp, msg.PoW, payload)
+		fmt.Printf("\n(%s PoW %f): %s\n", timestamp, msg.PoW, payload)
 	} else {
 		fmt.Printf("\n%x(%s PoW %f): %s\n", sender, timestamp, msg.PoW, payload)
 	}
@@ -272,7 +283,7 @@ func msgDisplay(msg *whisper.ReceivedMessage) {
 func readInput() string {
 
 	if !hasPeerConnected {
-		fmt.Printf("connecting")
+		fmt.Printf("Connecting...(may take several minutes)\n")
 	} else {
 		fmt.Printf(">>")
 	}
