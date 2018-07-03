@@ -118,9 +118,9 @@ func peerMonitor() {
 		select {
 		case v := <-subchan:
 			if v.Type == p2p.PeerEventTypeAdd {
-				fmt.Printf("add Peer %s\n", v.Peer.String())
+				fmt.Printf("\nAdd Peer %s\n", v.Peer.String())
 			} else if v.Type == p2p.PeerEventTypeDrop {
-				fmt.Printf("drop Peer %s\n", v.Peer.String())
+				fmt.Printf("\nDrop Peer %s\n", v.Peer.String())
 			}
 
 			if srv.PeerCount() > 0 {
@@ -148,7 +148,7 @@ func txLoop(quit chan struct{}) {
 	for {
 		s := readInput()
 		if s == "quit()" || s == "exit()" {
-			fmt.Println("program terminated")
+			fmt.Println("Program terminated")
 			close(quit)
 			break
 		} else if s == "info()" {
