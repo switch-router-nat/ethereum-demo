@@ -1,21 +1,3 @@
-// Copyright 2017 The go-ethereum Authors
-// This file is part of go-ethereum.
-//
-// go-ethereum is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// go-ethereum is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
-
-// This is a simple Whisper node. It could be used as a stand-alone bootstrap node.
-// Also, could be used for different test and diagnostics purposes.
 
 package main
 
@@ -25,14 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
+        "log"
 
-	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/nat"
@@ -44,8 +24,11 @@ var (
 	srv    *p2p.Server
 	peerCh chan p2p.PeerEvent
 	wg     sync.WaitGroup
+        hasPeerConnected bool
+        asymKey  *ecdsa.PrivateKey
 
 	w        *whisperv5.Whisper
+        topic    whisperv5.TopicType
 	keyID    string
 	filterID string
 )
@@ -53,13 +36,17 @@ var (
 var (
 	argTopic  = flag.String("topic", "abcd", "less 4 bytes topic")
 	argPasswd = flag.String("room-password", "123456", "password for generating symKey")
+        argPoW    = flag.Float64("pow",0.2,"The PoW of local node")
+
 )
 
-func newKey() *ecdsa.PrivatreKey {
+func newKey() *ecdsa.PrivateKey {
 	key, err := crypto.GenerateKey()
 	if err != nil {
-		panic("counldn't generate key: " + err.Error())
+		log.Panic("counldn't generate key: " + err.Error())
 	}
+
+        return key
 }
 
 func whisperConfig() {
@@ -68,24 +55,24 @@ func whisperConfig() {
 
 	keyID, err := w.AddSymKeyFromPassword(*argPasswd)
 	if err != nil {
-		panic("Failed AddSymKeyFromPassword : %s", err)
+		log.Panic("Failed AddSymKeyFromPassword : %s", err)
 	}
 
 	key, err := w.GetSymKey(keyID)
 	if err != nil {
-		panic("Failed GetSymKey: %s", err)
+		log.Panic("Failed GetSymKey: %s", err)
 	}
 
 	/* Install Filter */
-	topic := whisperv5.ByteToTopic([]byte(argTopic))
+	topic = whisperv5.BytesToTopic([]byte(*argTopic))
 	filter := whisperv5.Filter{
 		KeySym: key,
-		Topics: [][]byte(topic),
+		Topics: [][]byte{topic[:]},
 	}
 
-	filterID, err = w.Subscrible(&filter)
+	filterID, err = w.Subscribe(&filter)
 	if err != nil {
-		panic("Failed to install filter: %s", err)
+		log.Panic("Failed to install filter: %s", err)
 	}
 }
 
@@ -96,14 +83,15 @@ func serverConfig() {
 		peer := discover.MustParseNode(node)
 		peers = append(peers, peer)
 	}
-
+        asymKey =  newKey()
 	srv = &p2p.Server{
 		Config: p2p.Config{
-			PrivaeKey:     newKey(),
+			PrivateKey:    asymKey,
 			Protocols:     w.Protocols(),
-			BootstrapNode: peers,
 			StaticNodes:   peers,
-			TrustedNodes:  peers,
+                        BootstrapNodes: peers,
+                        TrustedNodes:  peers,
+                        NAT: nat.Any(),
 		},
 	}
 }
@@ -111,17 +99,26 @@ func serverConfig() {
 func peerMonitor() {
 
 	subchan := make(chan *p2p.PeerEvent)
-	sub := srv.SubscribleEvents(subchan)
+	sub := srv.SubscribeEvents(subchan)
 	defer sub.Unsubscribe()
-
+        
+        ticker := time.NewTicker(time.Second)
 	for {
 		select {
 		case v := <-subchan:
 			if v.Type == p2p.PeerEventTypeAdd {
 				fmt.Print("add Peer %s", v.Peer.String())
-			}
-		case srv.quit:
-			break
+			} else if v.Type == p2p.PeerEventTypeDrop{
+                                fmt.Print("drop Peer %s", v.Peer.String())
+                        }
+
+                        if srv.PeerCount() > 0 {
+                            hasPeerConnected = true
+                        }else{
+                            hasPeerConnected = false
+                        }
+               case <-ticker.C:
+                        fmt.Print("Peer count %d\n", srv.PeerCount())
 		}
 	}
 }
@@ -134,8 +131,13 @@ func txLoop(quit chan struct{}) {
 			fmt.Println("Quit")
 			close(quit)
 			break
-		}
-		msgSend([]byte(s))
+		}else if (len(s) == 0){
+                     continue 
+                }
+                
+                if hasPeerConnected{
+		    msgSend([]byte(s))
+                }
 	}
 }
 
@@ -175,18 +177,21 @@ func main() {
 	/* Start Server */
 	err := srv.Start()
 	if err != nil {
-		panic("Failed to start Server %s", err)
+		log.Panic("Failed to start Server %s", err)
 	}
 	defer srv.Stop()
+	fmt.Println("Server Start...\n")
 
 	/* Start Whisper background */
 	err = w.Start(srv)
 	if err != nil {
-		panic("Failed to start Whisper %s", err)
+		log.Panic("Failed to start Whisper %s", err)
 	}
 	defer w.Stop()
 
-	go peerMonitor()
+	fmt.Println("Whisper Start...\n")
+	
+        go peerMonitor()
 
 	var quit = make(chan struct{})
 
@@ -202,37 +207,26 @@ func main() {
 
 const quitCommand = "~Q"
 
-// encryption
-var (
-	symKey   []byte
-	asymKey  *ecdsa.PrivateKey
-	topic    whisper.TopicType
-	filterID string
-)
-
-// cmd arguments
-var (
-	argVerbosity = flag.Int("verbosity", int(log.LvlError), "log verbosity level")
-	argTopic     = flag.String("topic", "44c7429f", "topic in hexadecimal format (e.g. 70a4beef)")
-	argPass      = flag.String("password", "123456", "message's encryption password")
-	argPoW       = flag.Float64("pow", "0.2", "The PoW of local node")
-)
 
 func msgSend(payload []byte) common.Hash {
-	params := whisperv5.MessageParams{
+	key,err := w.GetSymKey(keyID)
+        if err != nil {
+             log.Panic("GetSymKey failed in msgSend",err)
+        }
+        params := whisperv5.MessageParams{
 		Src:      asymKey,
-		KeySym:   symKey,
+		KeySym:   key,
 		Payload:  payload,
 		Topic:    topic,
 		TTL:      whisperv5.DefaultTTL,
-		PoW:      argPoW,
+		PoW:      *argPoW,
 		WorkTime: 5,
 	}
 
 	/* Craete message */
-	msg, err := whisper.NewSentMessage(&params)
+	msg, err := whisperv5.NewSentMessage(&params)
 	if err != nil {
-		panic("failed to create new message: %s", err)
+		log.Panic("failed to create new message: %s", err)
 	}
 
 	/* Wrap message into envelope */
@@ -255,11 +249,11 @@ func msgSend(payload []byte) common.Hash {
 func msgDisplay(msg *whisperv5.ReceivedMessage) {
 	payload := string(msg.Payload)
 	timestamp := time.Unix(int64(msg.Sent), 0).Format("2006-01-02 15:04:05")
-	var address common.Address
+	var sender common.Address
 	if msg.Src != nil {
 		sender = crypto.PubkeyToAddress(*msg.Src)
 	}
-	if whisper.IsPubKeyEqual(msg.Src, &asymKey.PublicKey) {
+	if whisperv5.IsPubKeyEqual(msg.Src, &asymKey.PublicKey) {
 		fmt.Printf("\nI(%s PoW %f): %s\n", timestamp, msg.PoW, payload)
 	} else {
 		fmt.Printf("\n%x(%s PoW %f): %s\n", sender, timestamp, msg.PoW, payload)
@@ -268,9 +262,13 @@ func msgDisplay(msg *whisperv5.ReceivedMessage) {
 
 func readInput() string {
 
-	f := bufio.NewReader(os.Stdin)
+        if !hasPeerConnected {
+             fmt.Print(">>[nopeer]")
+        }else {
+             fmt.Print(">>")
+        }
 
-	fmt.Print(">>")
+	f := bufio.NewReader(os.Stdin)
 
 	input, _ := f.ReadString('\n')
 
