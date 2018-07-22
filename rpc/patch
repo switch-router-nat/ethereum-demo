@@ -1,0 +1,47 @@
+diff --git a/cmd/geth/config.go b/cmd/geth/config.go
+index e6bd4d5..56e9d3b 100644
+--- a/cmd/geth/config.go
++++ b/cmd/geth/config.go
+@@ -171,6 +171,8 @@ func makeFullNode(ctx *cli.Context) *node.Node {
+ 		utils.RegisterShhService(stack, &cfg.Shh)
+ 	}
+ 
++	utils.RegisterMytestService(stack)
++
+ 	// Add the Ethereum Stats daemon if requested.
+ 	if cfg.Ethstats.URL != "" {
+ 		utils.RegisterEthStatsService(stack, cfg.Ethstats.URL)
+diff --git a/cmd/utils/flags.go b/cmd/utils/flags.go
+index a191e44..0fc3feb 100644
+--- a/cmd/utils/flags.go
++++ b/cmd/utils/flags.go
+@@ -50,6 +50,7 @@ import (
+ 	"github.com/ethereum/go-ethereum/log"
+ 	"github.com/ethereum/go-ethereum/metrics"
+ 	"github.com/ethereum/go-ethereum/metrics/influxdb"
++	"github.com/ethereum/go-ethereum/mytest"
+ 	"github.com/ethereum/go-ethereum/node"
+ 	"github.com/ethereum/go-ethereum/p2p"
+ 	"github.com/ethereum/go-ethereum/p2p/discover"
+@@ -1198,6 +1199,14 @@ func RegisterShhService(stack *node.Node, cfg *whisper.Config) {
+ 	}
+ }
+ 
++func RegisterMytestService(stack *node.Node) {
++	if err := stack.Register(func(n *node.ServiceContext) (node.Service, error) {
++		return mytest.New(), nil
++	}); err != nil {
++		Fatalf("Failed to register the Mytest service: %v", err)
++	}
++}
++
+ // RegisterEthStatsService configures the Ethereum Stats daemon and adds it to
+ // th egiven node.
+ func RegisterEthStatsService(stack *node.Node, url string) {
+diff --git a/tests/testdata b/tests/testdata
+deleted file mode 160000
+index 2bb0c3d..0000000
+--- a/tests/testdata
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit 2bb0c3da3bbb15c528bcef2a7e5ac4bd73f81f87
